@@ -172,13 +172,17 @@ class ShopCarAddHandler(BaseHandler):
 ## web2
 
 忘了题目了，好像是proof of work，这里有个坑，如果是字母+数字的六位字符串爆破sha256，不多线程大概四小时算出来一个。
+
 但题目设置的是，前两位是数字，后面四位是字母加数字【未验证】，所以大概一分钟可以得出一个。总之刷够了分数，开启留言板。
-最后一步：留言板提示是pickle反序列化漏洞，实际是传一个base64过的序列化过的串【这谁能想出来？】
+
+最后一步：留言板提示是pickle反序列化漏洞，实际是传一个base64过的序列化过的串，并且很完美的处理了解码错误异常，所以应该怎么知道需要提交一个base64编码之后的数据？
+
 修补：在最后的反序列化漏洞处，取消load功能，防止恶意代码执行。
 
 ## web4
 
-竞争，Henryzhao大佬竞争了半天也没成功。最后看代码，sleep(1)，框架develop模式下好像是单进程执行？反正我们觉得是做不到并行执行。
+购买逻辑存在时间竞争
+
 修改SQL语句，用户减少余额时判断是否拥有足够余额。
 
 ``` php
@@ -215,8 +219,9 @@ if(empty($_GET))
 
 ## web5
 
+登陆之后可以在cookie中看到iv和secret字样，CBC比特翻转
+
 代码中使用AES加密CBC分组模式，存在CBC比特翻转攻击，这里讲CBC分组模式修改为CFB分组模式
-这不给明文格式，求教各位大佬怎么翻。。
 
 将下面代码中的aes-128-cbc修改为aes-128-cfb
 
@@ -256,9 +261,24 @@ if(isset($_POST['name'])){
 ## web6
 
 新疆大盘鸡真好吃ww
+
 根据提示，先刷钱，等到购买了切糕【10000元】，买了之后，在购买记录里看到一个邮箱，利用重置功能，重置其账号密码。
-重置后首页下方出现github的链接【这谁能注意到。。】，访问后得到django的admin页面的路由【好长的字符串】，可以登录进去。
-之后是大佬做的了。。貌似是search功能里有格式化字符串漏洞。
+
+得到账号密码之后可以以admin身份登录
+
+之后发现admin比正常用户的功能中多了一个search功能，存在django格式化字符串
+
+读取secret key
+
+```
+{user.groups.model._meta.app_config.module.admin.settings.SECRET_KEY}
+```
+
+django 1.5在已知SECRET_KEY的情况下可以通过反序列化RCE
+
+可参考：http://www.polaris-lab.com/index.php/archives/426/
+
+修复：
 
 /home/ciscn/www/store/views.py 中的search功能存在Django格式化字符串漏洞
 
@@ -276,7 +296,121 @@ def search(request):
 
 ## web8
 
+首先有个JWT（和业务没啥关系的一个强行JWT）,明文部分如下
+
+```
+{"typ":"JWT","alg":"HS256"}.{"id":"81"}.
+```
+
+爆破得到HS256算法的密钥为hS25
+
+修改id为1然后提交计算出的JWT即可得到一个URL
+
+访问URL是一个代码审计
+
+```
+<?php 
+/** 
+ * Created by PhpStorm. 
+ * User: MS 
+ * Date: 2018/5/19 
+ * Time: 11:59 
+ */ 
+
+defined('BASEPATH') OR exit('No direct script access allowed'); 
+require_once APPPATH . 'libraries/REST_Controller.php'; 
+use Restserver\Libraries\REST_Controller; 
+
+class Sdlsaflholhpnklnvlk extends CI_Controller { 
+    public function __construct() 
+    { 
+        parent::__construct(); 
+    } 
+
+    public function index() 
+    { 
+        @include($_GET['file']); 
+
+        if(isset($_FILES['file']['tmp_name'])){ 
+            $filename = $_FILES['file']['name']; 
+            $filetype = $_FILES['file']['type']; 
+            $tmpname = $_FILES['file']['tmp_name']; 
+            $fileext = substr(strrchr($filename,"."),1); 
+            $uploaddir = 'static/'; 
+            $newimagepath = ''; 
+
+            if(($fileext == 'gif')&&($filetype == "image/gif")) 
+            { 
+                $im = imagecreatefromgif($tmpname); 
+                if($im) 
+                { 
+                    srand(time()); 
+                    $newfilename = md5(rand()).".gif"; 
+                    $newimagepath = $uploaddir.$newfilename; 
+                    imagegif($im,$newimagepath); 
+                } 
+                else 
+                { 
+                    echo '不是合法的gif文件'; 
+                } 
+                unlink($tmpname); 
+            }else if(($fileext == 'jpg')&&($filetype == "image/jpeg")) 
+            { 
+                $im = imagecreatefromjpeg($tmpname); 
+                if($im) 
+                { 
+                    srand(time()); 
+                    $newfilename = md5(rand()).".jpg"; 
+                    $newimagepath = $uploaddir.$newfilename; 
+                    imagejpeg($im,$newimagepath); 
+                } 
+                else 
+                { 
+                    echo '不是合法的jpg文件'; 
+                } 
+                unlink($tmpname); 
+            }else if (($fileext=='png')&&($filetype=="image/png")) 
+            { 
+                $im = imagecreatefrompng($tmpname); 
+                if($im) 
+                { 
+                    srand(time()); 
+                    $newfilename = md5(rand()).".png"; 
+                    $newimagepath = $uploaddir.$newfilename; 
+                    imagepng($im,$newimagepath); 
+                } 
+                else 
+                { 
+                    echo '不是合法的png文件'; 
+                } 
+                unlink($tmpname); 
+            }else 
+            { 
+                echo '只能上传图片文件'; 
+                unlink($tmpname); 
+            } 
+            if ($newimagepath) echo $newimagepath; 
+        } 
+        $data['file'] = highlight_file(__FILE__,true); 
+        $data['token_name'] = $this->security->get_csrf_token_name(); 
+        $data['token_hash'] = $this->security->get_csrf_hash(); 
+        $this->load->view('Api',$data); 
+
+    } 
+
+} 
+
+?>
+```
+
+上传文件然后进行包含即可getshell
+
+fixit阶段发现web的static目录(可列目录)中其实已经包含了存在后门的gif文件，直接包含这些文件即可getshell
+
+修复：
+
 删除已有后门gif。
+* 
 文件包含检查包含位置，禁止包含静态文件（上传的文件）
 
 ```php
@@ -653,6 +787,8 @@ if __name__ == '__main__':
 
 限制可上传文件格式与路径，只允许图片文件上传，并注释与业务逻辑无关的yaml解析代码。
 
+其实这题是通过上传py文件覆盖源码做的，因为题目server是django开发用内置server，在文件修改后会自动加载，所以可以这么来getshell
+
 ```python
 file_name = os.path.basename(meta['filename'])
 if os.path.splitext(file_name)[1][1:] not in ['jpg', 'jpeg', 'png', 'gif', 'bmp'] :
@@ -674,8 +810,8 @@ else:
 
 ## web3、web9
 
-均存在模板注入
-扫描到的：
+均存在模板注入, 404处理逻辑存在模板注入
+
 ```
 GET /{{501198*500347}}/reset HTTP/1.1
 Referer: http://172.16.6.107:8233
